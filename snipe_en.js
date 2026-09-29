@@ -1,6 +1,6 @@
 (() => {
     if (game_data.screen !== 'overview') {
-        UI.InfoMessage('Redirecionando para a visualização da aldeia...');
+        UI.InfoMessage('Redirecting to village overview...');
         return location.href = `${game_data.link_base_pure}overview`;
     }
 
@@ -120,9 +120,9 @@
                 <div class="sc-title">Snipe Cancel</div>
                 <div class="sc-sub"></div>
             </div>
-            <button class="sc-icon sc-test" title="Modo teste: qualquer comando chegando conta como nobre">${ICON.flask}</button>
-            <button class="sc-icon sc-refresh" title="Atualizar">${ICON.refresh}</button>
-            <button class="sc-icon sc-close" title="Fechar">${ICON.close}</button>
+            <button class="sc-icon sc-test" title="Test mode: any incoming command counts as a noble">${ICON.flask}</button>
+            <button class="sc-icon sc-refresh" title="Refresh">${ICON.refresh}</button>
+            <button class="sc-icon sc-close" title="Close">${ICON.close}</button>
         </div>
         <div class="sc-body"></div>
     </div>`).appendTo('body');
@@ -149,8 +149,10 @@
         const s = second(total);
         return `${Math.floor(s / 3600)}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}:${ms(total)}`;
     };
+
     const timer = t => `${Math.floor(t / 3600)}:${pad(Math.floor(t % 3600 / 60))}:${pad(t % 60)}`;
     const seconds = text => text.split(':').map(Number).reduce((acc, n) => acc * 60 + n, 0);
+
     const drag = () => {
         if ($.fn.draggable) $panel.draggable({ handle: '.sc-head', cancel: '.sc-icon', containment: 'window' });
         if (window.mobiledevice) $panel.css({ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' });
@@ -175,7 +177,10 @@
     const duration = async href => {
         if (href in durations) return durations[href];
         const html = await $.get(href);
-        const text = $.trim($(html).find('#content_value td').filter((_, td) => RX_DURATION.test($.trim(td.textContent))).first().text());
+        const text = $.trim($(html).find('#content_value td')
+            .filter((_, td) => RX_DURATION.test($.trim(td.textContent)))
+            .first().text());
+
         return durations[href] = text ? seconds(text) * 1000 : 0;
     };
 
@@ -185,14 +190,17 @@
             .get().map(row => ({
                 href: $(row).find('a[href*="info_command"]').attr('href'),
                 id: $(row).find('[data-command-id]').first().attr('data-command-id'),
-                name: $.trim($(row).find('.quickedit-label').first().text()) || 'Comando',
+                name: $.trim($(row).find('.quickedit-label').first().text()) || 'Command',
                 end: arrival(row),
             }));
+
         const list = [];
+
         for (const cmd of rows) {
             const travel = await duration(cmd.href);
             list.push({ ...cmd, travel, sent: cmd.end - travel });
         }
+
         return list.filter(cmd => cmd.travel && cmd.sent > now() - CANCEL_LIMIT);
     };
 
@@ -200,86 +208,242 @@
         .filter((_, row) => $(row).find('[data-command-type="cancel"]').length)
         .get().map(arrival).sort((a, b) => a - b);
 
-    const gaps = train => train.slice(1).map((b, i) => ({ a: train[i], b, n: i + 1 }));
+    const gaps = train => train.slice(1).map((b, i) => ({
+        a: train[i],
+        b,
+        n: i + 1
+    }));
 
     const place = (t, train) => {
         const i = train.findIndex(noble => t < noble);
-        if (i === 0) return { ok: false, text: 'antes do 1º' };
-        if (i === -1) return { ok: false, text: 'depois do último' };
-        return { ok: true, text: `entre ${i}º e ${i + 1}º` };
+
+        if (i === 0) {
+            return { ok: false, text: 'before the 1st' };
+        }
+
+        if (i === -1) {
+            return { ok: false, text: 'after the last' };
+        }
+
+        return {
+            ok: true,
+            text: `between ${i} and ${i + 1}`
+        };
     };
 
     const plan = ({ a, b }) => {
         const from = a + 1;
         const to = b - 1;
-        if (to < from) return 'Intervalo curto demais para encaixar.';
-        const parts = second(from) === second(to) ? [[from, to]] : [[from, second(from) * 1000 + 999], [second(to) * 1000, to]];
-        return `Envie com ${parts.map(([x, y]) => `ms <b>${ms(x)}–${ms(y)}</b> em segundo <b>${second(x) % 2 ? 'ímpar' : 'par'}</b>`).join(' ou ')}.`;
+
+        if (to < from) {
+            return 'Gap is too short to fit.';
+        }
+
+        const parts =
+            second(from) === second(to)
+                ? [[from, to]]
+                : [
+                    [from, second(from) * 1000 + 999],
+                    [second(to) * 1000, to]
+                ];
+
+        return `Send at ${
+            parts.map(([x, y]) =>
+                `ms <b>${ms(x)}–${ms(y)}</b> in an <b>${
+                    second(x) % 2 ? 'odd' : 'even'
+                }</b> second`
+            ).join(' or ')
+        }.`;
     };
 
     const evaluate = (cmd, { a, b }) => {
         const k = Math.floor((a - cmd.sent) / 2000) + 1;
         const back = cmd.sent + k * 2000;
         const start = second(cmd.sent) * 1000 + k * 1000;
-        const status = back >= b ? `Não encaixa: volta ${clock(back)}`
-            : k * 1000 > CANCEL_LIMIT ? 'Passa do limite de 10 min para cancelar'
-            : k * 1000 >= cmd.travel ? 'Chega ao destino antes de cancelar'
-            : start + 1000 <= now() ? 'O segundo de cancelar já passou'
-            : '';
+
+        const status =
+            back >= b
+                ? `Does not fit: returns ${clock(back)}`
+                : k * 1000 > CANCEL_LIMIT
+                    ? 'Exceeds the 10-minute cancel limit'
+                    : k * 1000 >= cmd.travel
+                        ? 'Reaches the destination before it can be cancelled'
+                        : start + 1000 <= now()
+                            ? 'The cancel second has already passed'
+                            : '';
+
         const counter = timer(second(cmd.end) - second(start));
-        return { start, back, counter, fit: !status, status: status || `Encaixa · cancele com o contador em ${counter}` };
+
+        return {
+            start,
+            back,
+            counter,
+            fit: !status,
+            status: status || `Fits · cancel when the timer shows ${counter}`
+        };
     };
 
-    const option = (active, title, sub, attrs) => `<button class="sc-option${active ? ' sc-active' : ''}" ${attrs}><b>${title}</b><small>${sub}</small></button>`;
+    const option = (active, title, sub, attrs) =>
+        `<button class="sc-option${active ? ' sc-active' : ''}" ${attrs}>
+            <b>${title}</b>
+            <small>${sub}</small>
+        </button>`;
 
     const render = () => {
         const train = state.trains[state.train];
-        if (!train) return $body.html(`<div class="sc-idle">
-            <div class="sc-idle-icon">${ICON.target}</div>
-            <b>Nenhum trem de nobres</b>
-            <p>Quando 2 ou mais nobres chegarem nesta aldeia com menos de 1 s entre eles, os intervalos para encaixar aparecem aqui.</p>
-        </div>`);
+
+        if (!train) {
+            return $body.html(`
+                <div class="sc-idle">
+                    <div class="sc-idle-icon">${ICON.target}</div>
+                    <b>No noble train detected</b>
+                    <p>
+                        When 2 or more nobles arrive at this village less than
+                        1 second apart, the available gaps will appear here.
+                    </p>
+                </div>
+            `);
+        }
+
         const gap = gaps(train)[state.gap];
-        const results = state.commands.map(cmd => ({ cmd, ...evaluate(cmd, gap) }));
-        const chosen = results.find(r => r.cmd.href === state.command && r.fit) || results.find(r => r.fit);
+        const results = state.commands.map(cmd => ({
+            cmd,
+            ...evaluate(cmd, gap)
+        }));
+
+        const chosen =
+            results.find(r => r.cmd.href === state.command && r.fit) ||
+            results.find(r => r.fit);
+
         state.command = chosen && chosen.cmd.href;
-        const back = state.returns.filter(t => t > train[0] - RETURN_NEAR && t < train[train.length - 1] + RETURN_NEAR);
+
+        const back = state.returns.filter(
+            t =>
+                t > train[0] - RETURN_NEAR &&
+                t < train[train.length - 1] + RETURN_NEAR
+        );
+
         $body.html(`
-            ${state.trains.length > 1 ? `<div class="sc-section">
-                <div class="sc-label">Trem</div>
-                <div class="sc-options">${state.trains.map((t, i) => option(i === state.train, clock(t[0]).slice(0, 8), `${t.length} nobres`, `data-train="${i}"`)).join('')}</div>
-            </div>` : ''}
+            ${
+                state.trains.length > 1
+                    ? `<div class="sc-section">
+                        <div class="sc-label">Train</div>
+                        <div class="sc-options">
+                            ${
+                                state.trains.map((t, i) =>
+                                    option(
+                                        i === state.train,
+                                        clock(t[0]).slice(0, 8),
+                                        `${t.length} nobles`,
+                                        `data-train="${i}"`
+                                    )
+                                ).join('')
+                            }
+                        </div>
+                    </div>`
+                    : ''
+            }
+
             <div class="sc-section">
-                <div class="sc-label">Encaixar entre</div>
-                <div class="sc-options">${gaps(train).map((g, i) => option(i === state.gap, `${g.n}º → ${g.n + 1}º`, `${ms(g.a)}–${ms(g.b)}`, `data-gap="${i}"`)).join('')}</div>
+                <div class="sc-label">Fit between</div>
+                <div class="sc-options">
+                    ${
+                        gaps(train).map((g, i) =>
+                            option(
+                                i === state.gap,
+                                `${g.n} → ${g.n + 1}`,
+                                `${ms(g.a)}–${ms(g.b)}`,
+                                `data-gap="${i}"`
+                            )
+                        ).join('')
+                    }
+                </div>
                 <div class="sc-plan">${plan(gap)}</div>
             </div>
+
             <div class="sc-divider"></div>
+
             <div class="sc-section">
-                <div class="sc-label">Seus comandos</div>
-                ${results.length ? results.map(r => `<button class="sc-cmd${r.fit ? ' sc-fit' : ''}${chosen && r === chosen ? ' sc-active' : ''}" data-href="${r.cmd.href}">
-                    <span class="sc-cmd-name">${$('<i>').text(r.cmd.name).html()}</span>
-                    <small>saiu ${clock(r.cmd.sent)}</small>
-                    <span class="sc-cmd-status">${r.status}</span>
-                </button>`).join('') : '<div class="sc-empty">Envie o apoio. Ao voltar para esta aba, ele aparece aqui.</div>'}
+                <div class="sc-label">Your commands</div>
+
+                ${
+                    results.length
+                        ? results.map(r => `
+                            <button
+                                class="sc-cmd${r.fit ? ' sc-fit' : ''}${
+                                    chosen && r === chosen ? ' sc-active' : ''
+                                }"
+                                data-href="${r.cmd.href}"
+                            >
+                                <span class="sc-cmd-name">
+                                    ${$('<i>').text(r.cmd.name).html()}
+                                </span>
+                                <small>sent ${clock(r.cmd.sent)}</small>
+                                <span class="sc-cmd-status">
+                                    ${r.status}
+                                </span>
+                            </button>
+                        `).join('')
+                        : `
+                            <div class="sc-empty">
+                                Send the support command. When you return to this
+                                tab, it will appear here.
+                            </div>
+                        `
+                }
             </div>
-            ${back.length ? `<div class="sc-divider"></div>
-            <div class="sc-section">
-                <div class="sc-label">Retornando</div>
-                ${back.map(t => {
-                    const p = place(t, train);
-                    return `<div class="sc-ret${p.ok ? ' sc-fit' : ''}"><span>${clock(t)}</span><span>${p.ok ? '✓' : '✗'} ${p.text}</span></div>`;
-                }).join('')}
-            </div>` : ''}
-            ${chosen ? `<div class="sc-divider"></div>
-            <div class="sc-section">
-                <div class="sc-countdown"></div>
-                <div class="sc-at sc-target"><span>Cancele quando o “Chega em” marcar</span><b>${chosen.counter}</b></div>
-            </div>` : ''}
+
+            ${
+                back.length
+                    ? `
+                        <div class="sc-divider"></div>
+
+                        <div class="sc-section">
+                            <div class="sc-label">Returning</div>
+
+                            ${
+                                back.map(t => {
+                                    const p = place(t, train);
+
+                                    return `
+                                        <div class="sc-ret${p.ok ? ' sc-fit' : ''}">
+                                            <span>${clock(t)}</span>
+                                            <span>
+                                                ${p.ok ? '✓' : '✗'} ${p.text}
+                                            </span>
+                                        </div>
+                                    `;
+                                }).join('')
+                            }
+                        </div>
+                    `
+                    : ''
+            }
+
+            ${
+                chosen
+                    ? `
+                        <div class="sc-divider"></div>
+
+                        <div class="sc-section">
+                            <div class="sc-countdown"></div>
+
+                            <div class="sc-at sc-target">
+                                <span>Cancel when “Arrives in” shows</span>
+                                <b>${chosen.counter}</b>
+                            </div>
+                        </div>
+                    `
+                    : ''
+            }
         `);
+
         mark(chosen && chosen.cmd.id);
+
         clearInterval(window.scTimer);
+
         if (!chosen) return;
+
         $body.data('start', chosen.start);
         window.scTimer = setInterval(tick, 47);
         tick();
@@ -287,16 +451,35 @@
 
     const mark = id => {
         $('tr.sc-mark').removeClass('sc-mark');
-        if (id) $(OUTGOING).find(`[data-command-id="${id}"]`).closest('tr.command-row').addClass('sc-mark');
+
+        if (id) {
+            $(OUTGOING)
+                .find(`[data-command-id="${id}"]`)
+                .closest('tr.command-row')
+                .addClass('sc-mark');
+        }
     };
 
     const tick = () => {
         const left = $body.data('start') - now();
         const inside = left <= 0 && left > -1000;
+
         $body.find('.sc-countdown')
-            .text(inside ? 'CANCELE AGORA' : left > 0 ? span(left) : 'Horário passou')
-            .toggleClass('sc-soon', inside || left > 0 && left < 10000);
-        if (left <= -1000) clearInterval(window.scTimer);
+            .text(
+                inside
+                    ? 'CANCEL NOW'
+                    : left > 0
+                        ? span(left)
+                        : 'Time window passed'
+            )
+            .toggleClass(
+                'sc-soon',
+                inside || (left > 0 && left < 10000)
+            );
+
+        if (left <= -1000) {
+            clearInterval(window.scTimer);
+        }
     };
 
     const load = async $root => {
@@ -304,25 +487,51 @@
         state.trains = trains($root);
         state.commands = await commands($root);
         state.returns = returns($root);
-        state.train = Math.min(state.train, Math.max(0, state.trains.length - 1));
-        state.gap = Math.min(state.gap, Math.max(0, (state.trains[state.train] || []).length - 2));
+
+        state.train = Math.min(
+            state.train,
+            Math.max(0, state.trains.length - 1)
+        );
+
+        state.gap = Math.min(
+            state.gap,
+            Math.max(
+                0,
+                (state.trains[state.train] || []).length - 2
+            )
+        );
+
         render();
     };
 
     const refresh = async () => {
         if ($panel.hasClass('sc-busy')) return;
+
         $panel.addClass('sc-busy');
+
         try {
-            await load($('<div>').html(await $.get(location.href)));
+            await load(
+                $('<div>').html(
+                    await $.get(location.href)
+                )
+            );
         } catch {
-            UI.ErrorMessage('Não foi possível atualizar a visualização');
+            UI.ErrorMessage('Could not refresh the overview');
         }
+
         $panel.removeClass('sc-busy');
     };
 
     const mode = () => {
-        $panel.find('.sc-test').toggleClass('sc-active', state.test);
-        $panel.find('.sc-sub').text(state.test ? 'Modo teste · qualquer comando conta como nobre' : 'Nobres e comandos detectados sozinhos');
+        $panel.find('.sc-test')
+            .toggleClass('sc-active', state.test);
+
+        $panel.find('.sc-sub')
+            .text(
+                state.test
+                    ? 'Test mode · any command counts as a noble'
+                    : 'Nobles and commands detected automatically'
+            );
     };
 
     const close = () => {
@@ -334,29 +543,42 @@
 
     $panel.on('click', '.sc-close', close);
     $panel.on('click', '.sc-refresh', refresh);
+
     $panel.on('click', '.sc-test', () => {
         state.test = !state.test;
-        localStorage.setItem(TEST_KEY, state.test ? '1' : '0');
+
+        localStorage.setItem(
+            TEST_KEY,
+            state.test ? '1' : '0'
+        );
+
         mode();
+
         if (!state.root) return;
+
         state.trains = trains(state.root);
         state.train = 0;
         state.gap = 0;
+
         render();
     });
+
     $panel.on('click', '[data-train]', e => {
         state.train = +$(e.currentTarget).data('train');
         state.gap = 0;
         render();
     });
+
     $panel.on('click', '[data-gap]', e => {
         state.gap = +$(e.currentTarget).data('gap');
         render();
     });
+
     $panel.on('click', '.sc-cmd', e => {
         state.command = $(e.currentTarget).data('href');
         render();
     });
+
     $(window).on('focus.sc', refresh);
 
     drag();
